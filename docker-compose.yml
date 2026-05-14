@@ -1,15 +1,16 @@
 services:
   dash-app:
-    image: kdashboard
+    build: .            # <--- ESTA LÍNEA ES LA QUE FALTA
+    image: kdashboard   # Ahora esto servirá como etiqueta local
+    container_name: kdash_container
     ports:
       - "8051:8051"
     restart: unless-stopped
     volumes:
       - .:/usr/src/app
     networks:
-      - shared_network # Just the name here
+      - shared_network
 
-# This top-level section tells Compose the network already exists
 networks:
   shared_network:
     external: true
