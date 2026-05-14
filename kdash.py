@@ -25,9 +25,9 @@ def get_data(use_cache=False):
                 DATA_CACHE.get('df3'), DATA_CACHE.get('df2'))
 
     try:
-        url = 'http://localhost:3000/run-query'
-
-        #url = 'http://your-api-image:3000/run-query'
+        #url = 'http://localhost:3000/run-query'
+        url = 'http://192.168.3.155:3000/run-query'
+        
         response = requests.get(url, timeout=10)
         response.raise_for_status()
 
