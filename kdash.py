@@ -14,6 +14,9 @@ import dash_bootstrap_components as dbc
 DATA_CACHE = {}
 money_format = Format(precision=2, scheme=Scheme.fixed, symbol=Symbol.yes, symbol_prefix='$', group=True)
 
+# URL fija para evitar que rompa en la lectura del código estructurado
+url = 'http://192.168.3.155:3000/run-query'
+
 # ==============================================================================
 # 2. DATA FETCHING AND PROCESSING
 # ==============================================================================
@@ -26,9 +29,6 @@ def get_data(use_cache=False):
                 DATA_CACHE.get('df3'), DATA_CACHE.get('df2'))
 
     try:
-        #url = 'http://localhost:3000/run-query'
-
-        url = 'http://192.168.3.155:3000/run-query'
         response = requests.get(url, timeout=10)
         response.raise_for_status()
 
@@ -53,8 +53,6 @@ def get_data(use_cache=False):
         )[['Category', 'Qty','Net_Profit', 'ReInvest']].groupby(
             ['Category'], as_index=False).agg('sum').sort_values(by='Net_Profit', ascending=False)
 
-  # SKU Performance
-  
         # SKU Performance
         SKU = df.groupby(['SKU','Category','ProductName'], as_index=False).agg({
             'Qty': 'sum',
@@ -99,32 +97,41 @@ def get_data(use_cache=False):
         return empty, empty, empty, empty, empty, empty
 
 # ==============================================================================
-# 3. DASH INITIALIZATION
+# 3. DASH INITIALIZATION & MATERIAL LAYOUT (MOBILE FRIENDLY)
 # ==============================================================================
 app = dash.Dash(
     __name__, 
     suppress_callback_exceptions=True,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[dbc.themes.FLATLY], # Cambiado a un tema limpio y corporativo
     meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}]
 )
 
 server = app.server
 
+# Barra de navegación responsiva (Se convierte en hamburguesa en móviles automáticamente)
+navbar = dbc.NavbarSimple(
+    children=[
+        dbc.NavItem(dbc.NavLink('Overall', href='/Overall')),
+        dbc.NavItem(dbc.NavLink('Order Summary', href='/OrderSummary')),
+        dbc.NavItem(dbc.NavLink('Order Details', href='/OrderDetails')),
+        dbc.NavItem(dbc.NavLink('Products', href='/Products')),
+        dbc.NavItem(dbc.NavLink('Category', href='/Category')),
+    ],
+    brand="Analytics Dashboard",
+    brand_href="/Overall",
+    color="primary",
+    dark=True,
+    className="mb-4",
+)
+
 app.layout = html.Div([
     dcc.Location(id='url', refresh=False),
     dcc.Interval(id='interval-component', interval=30 * 1000, n_intervals=0),
-    
-    html.Div([
-        dcc.Link('Overall', href='/Overall'), html.Span(' | '),
-        #dcc.Link('Monthly', href='/Monthly'), html.Span(' | '),
-        dcc.Link('Order Summary', href='/OrderSummary'), html.Span(' | '),
-        dcc.Link('Order Details', href='/OrderDetails'), html.Span(' | '),
-        dcc.Link('Products', href='/Products'), html.Span(' | '),
-        dcc.Link('Category', href='/Category')
-    ], style={'padding': '10px', 'backgroundColor': '#f9f9f9', 'borderBottom': '1px solid #ddd'}),
-
-    html.Div(id='page-content')
+    navbar,
+    # El contenedor ajusta el ancho de los datos de forma fluida según el dispositivo
+    dbc.Container(id='page-content', fluid=True)
 ])
+
 # ==============================================================================
 # 4. UTILITIES
 # ==============================================================================
@@ -142,13 +149,17 @@ def create_plotly_table(data_frame):
         else:
             formatted_values.append(data_frame[col])
 
-    return go.Figure(data=[go.Table(
-        header=dict(values=list(data_frame.columns), fill_color='#2c3e50', font=dict(color='white')),
-        cells=dict(values=formatted_values, fill_color='#ecf0f1', align='left')
+    fig = go.Figure(data=[go.Table(
+        header=dict(values=list(data_frame.columns), fill_color='#2c3e50', font=dict(color='white', size=13), height=30),
+        cells=dict(values=formatted_values, fill_color='#f8f9fa', align='left', font=dict(size=12), height=25)
     )])
+    
+    # Añadimos margen responsivo a la tabla embebida de plotly
+    fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=450)
+    return fig
 
 # ==============================================================================
-# 5. ROUTING CALLBACK
+# 5. ROUTING CALLBACK WITH GRID SYSTEM
 # ==============================================================================
 @app.callback(
     Output('page-content', 'children'),
@@ -156,83 +167,111 @@ def create_plotly_table(data_frame):
      Input('interval-component', 'n_intervals')]
 )
 def display_page(pathname, n_intervals):
-    # Refresh logic: Every 10 intervals (5 mins) or if cache is empty
     use_cache = not (n_intervals % 10 == 0 or not DATA_CACHE)
     Annual, category, SKU, df1, df3, df2 = get_data(use_cache=use_cache)
 
     if df1.empty:
-        return html.Div([html.H2("Error: Could not load data from API.")], style={'color': 'red', 'padding': '20px'})
+        return dbc.Alert("Error: Could not load data from API.", color="danger", className="m-4")
 
+    # DISEÑO OVERALL
     if pathname == '/Overall' or pathname == '/':
         df3['YearMonth'] = df3['Date'].dt.strftime('%Y-%m')
-        #fig = px.bar(df3, x='YearMonth', y=['OrderTotal', 'Profit'], barmode='group', title='Monthly Performance')
         fig = px.bar(
             df3, x='YearMonth', y=['OrderTotal', 'Net_Profit'],
             text_auto='.2s', barmode='group',
             labels={'value': 'Amount', 'variable': 'Metric'},
-            title='Monthly Order Total vs. Profit1'
+            title='Monthly Order Total vs. Profit'
         )
-        return html.Div(style={'padding': '20px'}, children=[
-            dcc.Graph(figure=fig),
-            html.H3("Annual Summary", style={'marginTop': '30px'}),
-            dash_table.DataTable(
-                data=Annual.to_dict('records'),
-                columns=[                   
-                    {'id': 'Date', 'name': 'Year'},
-                    {'id': 'Orders', 'name': 'Total Orders'},
-                    {'id': 'Items', 'name': 'Items Sold'},
-                    {'id': 'Sale', 'name': 'Total Sale', 'type': 'numeric', 'format': money_format},
-                    {'id': 'Net_Profit', 'name': 'Net Revenue', 'type': 'numeric', 'format': money_format}
-                ],
-                style_header={'fontWeight': 'bold', 'backgroundColor': '#f2f2f2'},
-                style_cell={'textAlign': 'left'}
-            )
+        fig.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=40, b=10))
+        
+        return dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([dcc.Graph(figure=fig)]), className="shadow-sm mb-4"), xs=12),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H4("Annual Summary", className="card-title mb-3"),
+                # El Div permite scroll lateral si la tabla no cabe en pantallas xs
+                html.Div(dash_table.DataTable(
+                    data=Annual.to_dict('records'),
+                    columns=[                    
+                        {'id': 'Date', 'name': 'Year'},
+                        {'id': 'Orders', 'name': 'Total Orders'},
+                        {'id': 'Items', 'name': 'Items Sold'},
+                        {'id': 'Sale', 'name': 'Total Sale', 'type': 'numeric', 'format': money_format},
+                        {'id': 'Net_Profit', 'name': 'Net Revenue', 'type': 'numeric', 'format': money_format}
+                    ],
+                    style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+                    style_cell={'textAlign': 'left', 'padding': '12px'},
+                ), style={"overflowX": "auto"})
+            ]), className="shadow-sm mb-4"), xs=12)
         ])
 
+    # DISEÑO ORDER SUMMARY
     elif pathname == '/OrderSummary':
         columns_to_format = ['OrderTotal','ProductPrice','Shipping','ProductCost', 'Net_Profit', 'ReInvest']
         table_columns = [{"name": i, "id": i, "type": "numeric", "format": money_format} if i in columns_to_format
                          else {"name": i, "id": i} for i in df1.columns]
-        return html.Div([
-            html.H1('Order Summary'),
-            dash_table.DataTable(data=df1.to_dict('records'), columns=table_columns,
-                                 page_size=20, sort_action="native", filter_action="native")
-        ], style={'padding': '20px'})
+        return dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H2('Order Summary', className="mb-3"),
+                html.Div(dash_table.DataTable(
+                    data=df1.to_dict('records'), columns=table_columns,
+                    page_size=20, sort_action="native", filter_action="native",
+                    style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+                    style_cell={'padding': '10px'}
+                ), style={"overflowX": "auto"})
+            ]), className="shadow-sm mb-4"), xs=12)
+        ])
 
+    # DISEÑO ORDER DETAILS
     elif pathname == '/OrderDetails':
         order_ids = sorted(df2['OrderID'].unique(), reverse=True)
         dropdown_options = [{'label': 'ALL Orders', 'value': 'ALL'}] + [{'label': f'Order #{oid}', 'value': oid} for oid in order_ids]
 
-        return html.Div([
-            html.H1('Order Details'),
-            dcc.Dropdown(id='order-dropdown', options=dropdown_options, value='ALL', clearable=False, style={'width': '300px'}),
-            dcc.Graph(id='order-details-table', figure=create_plotly_table(df2))
-        ], style={'padding': '20px'})
+        return dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H2('Order Details', className="mb-3"),
+                html.Label("Select Order filter:", className="text-muted mb-2"),
+                # Dropdown adaptivo a anchos móviles (100% en xs, máximo 350px en desktop)
+                dcc.Dropdown(id='order-dropdown', options=dropdown_options, value='ALL', clearable=False, style={'maxWidth': '350px'}, className="mb-3"),
+                html.Div(dcc.Graph(id='order-details-table', figure=create_plotly_table(df2)), style={"overflowX": "auto"})
+            ]), className="shadow-sm mb-4"), xs=12)
+        ])
 
+    # DISEÑO PRODUCTS
     elif pathname == '/Products':
-        return html.Div([
-            html.H1('Product Performance'),
-            dash_table.DataTable(data=SKU.to_dict('records'),
-                                 columns=[{'id': k, 'name': k, 'type': 'numeric', 'format': money_format} if k == 'Net_Profit' else {'id': k, 'name': k} for k in SKU.columns],
-                                 page_size=20, sort_action="native", filter_action="native")
-        ], style={'padding': '20px'})
+        return dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H2('Product Performance', className="mb-3"),
+                html.Div(dash_table.DataTable(
+                    data=SKU.to_dict('records'),
+                    columns=[{'id': k, 'name': k, 'type': 'numeric', 'format': money_format} if k == 'Net_Profit' else {'id': k, 'name': k} for k in SKU.columns],
+                    page_size=20, sort_action="native", filter_action="native",
+                    style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+                    style_cell={'padding': '10px'}
+                ), style={"overflowX": "auto"})
+            ]), className="shadow-sm mb-4"), xs=12)
+        ])
 
-
+    # DISEÑO CATEGORY
     elif pathname == '/Category':
-        return html.Div([
-            html.H1('Category Performance'),
-            dash_table.DataTable(
-                data=category.to_dict('records'),
-                columns=[
-                    {'id': 'Category', 'name': 'Category'},
-                    {'id': 'Qty', 'name': 'Units Sold'},
-                    {'id': 'Net_Profit', 'name': 'Total Profit', 'type': 'numeric', 'format': money_format},
-                    {'id': 'ReInvest', 'name': 'ReInvest', 'type': 'numeric', 'format': money_format}
-                ],
-                page_size=20, sort_action="native")
-        ], style={'padding': '20px'})
+        return dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.H2('Category Performance', className="mb-3"),
+                html.Div(dash_table.DataTable(
+                    data=category.to_dict('records'),
+                    columns=[
+                        {'id': 'Category', 'name': 'Category'},
+                        {'id': 'Qty', 'name': 'Units Sold'},
+                        {'id': 'Net_Profit', 'name': 'Total Profit', 'type': 'numeric', 'format': money_format},
+                        {'id': 'ReInvest', 'name': 'ReInvest', 'type': 'numeric', 'format': money_format}
+                    ],
+                    page_size=20, sort_action="native",
+                    style_header={'fontWeight': 'bold', 'backgroundColor': '#f8f9fa'},
+                    style_cell={'padding': '10px'}
+                ), style={"overflowX": "auto"})
+            ]), className="shadow-sm mb-4"), xs=12)
+        ])
 
-    return html.H1("404: Page Not Found")
+    return dbc.Container(html.H1("404: Page Not Found", className="text-danger mt-5"))
 
 # ==============================================================================
 # 6. INTERACTIVE TABLE CALLBACK
@@ -257,4 +296,3 @@ def update_table(selected_order_id):
 if __name__ == '__main__':
     get_data() # Initial load
     app.run(debug=True, port=8051)
-    #app.run(jupyter_mode="external", host="0.0.0.0", port=8050)
